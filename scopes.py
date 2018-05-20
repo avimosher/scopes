@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import sys, re, json
+import sys, re, json, copy
 from collections import defaultdict
 import matplotlib
 import matplotlib.pyplot as plt
@@ -47,6 +47,7 @@ token_dict.append(('RBRACKET', '}'))
 token_dict.append(('SEMICOLON', ';'))
 token_dict.append(('PLUSEQUAL', '\+='))
 token_dict.append(('EXPORT', '\^='))
+token_dict.append(('IMPORT', 'v='))
 token_dict.append(('EQUAL', '='))
 token_dict.append(('DIVISION', '/'))
 token_dict.append(('SCOPENAME', ':[^\n]*\n'))
@@ -91,7 +92,8 @@ productions['EXPRLIST'] = [[Rule('EXPR'),
 productions['EXPR'] = [[Rule('INCREMENT')],
                        [Rule('SET')],
                        [Rule('SCOPE')],
-                       [Rule('EXPORT')]]
+                       [Rule('EXPORT')],
+                       [Rule('IMPORT')]]
 productions['INCREMENT'] = [[Token('NAME'),
                              Token('PLUSEQUAL'),
                              Token('VALUE')]]
@@ -100,6 +102,9 @@ productions['SET'] = [[Token('NAME'),
                        Token('VALUE')]]
 productions['EXPORT'] = [[Token('NAME'),
                           Token('EXPORT'),
+                          Rule('RHS')]]
+productions['IMPORT'] = [[Token('NAME'),
+                          Token('IMPORT'),
                           Rule('RHS')]]
 productions['RHS'] = [[Rule('LOOKUP'),
                        Token('DIVISION'),
@@ -149,91 +154,116 @@ def parse(token_list, index, rule):
 parse_final = parse(tokens, 0, 'SCOPE')
 
 def print_parse(parse_tree, prefix):
+    if isinstance(parse_tree.elements, Token):
+        print(prefix + parse_tree.rule_type)
+        return
     print(prefix + parse_tree.rule_type)
     for element in parse_tree.elements:
         print_parse(element, prefix + "  ")
 
-#print_parse(parse_final[2], "")
+print_parse(parse_final[2], "")
 
 data_store = defaultdict(lambda: defaultdict(float))
 
-def handle_scope(x, s):
-    outer_parent = s['PARENT_SCOPE']
-    s['PARENT_SCOPE'] = s['SCOPE']
-    s['SCOPE'] = x[1].elements.content
-    interpret(x[2], s)
-    s['SCOPE'] = s['PARENT_SCOPE']
-    s['PARENT_SCOPE'] = outer_parent
+class Scope:
+    def __init__(self, stack):
+        self.stack = stack
 
-def handle_increment(x, s):
-    data_store[s['SCOPE']][x[0].elements.content] += float(x[2].elements.content)
+    def push(self, scope):
+        self.stack.append(scope)
 
-def handle_set(x, s):
-    data_store[s['SCOPE']][x[0].elements.content] = float(x[2].elements.content)
+    def pop(self):
+        return self.stack.pop()
 
-def handle_export(x, s):
+    def create_parent(self): 
+        parent_scope = Scope(list(self.stack))
+        parent_scope.stack.pop()
+        return parent_scope
+   
+    def parent_scope(self):
+        return self.stack[-2]
+
+    def scope(self):
+        return self.stack[-1]
+
+def handle_scope(x, s, d):
+    s.push(x[1].elements.content)
+    interpret(x[2], s, d)
+    s.pop()
+
+def handle_increment(x, s, d):
+    d[s.scope()][x[0].elements.content] += float(x[2].elements.content)
+
+def handle_set(x, s, d):
+    d[s.scope()][x[0].elements.content] = float(x[2].elements.content)
+
+def handle_export(x, s, d):
     name = x[0].elements.content
-    print(x[2].rule_type)
-    value = interpret(x[2], s)
-    data_store[s['PARENT_SCOPE']][name] += value
-    data_store[s['SCOPE']][name] -= value
+    value = interpret(x[2], s, d)
+    d[s.parent_scope()][name] += value
+    d[s.scope()][name] -= value
 
-def handle_exprlist(x, s):
-    interpret(x[0], s)
+def handle_import(x, s, d):
+    name = x[0].elements.content
+    value = interpret(x[2], s.create_parent(), d)
+    d[s.parent_scope()][name] -= value
+    d[s.scope()][name] += value
+
+def handle_exprlist(x, s, d):
+    interpret(x[0], s, d)
     if (len(x) == 2):
-        interpret(x[1], s)
+        interpret(x[1], s, d)
 
-def handle_expr(x, s):
-    interpret(x[0], s)
+def handle_expr(x, s, d):
+    interpret(x[0], s, d)
 
-def handle_lookup(x, s):
+def handle_lookup(x, s, d):
     if x[0].elements.token_type == 'NAME':
-        return data_store[s['SCOPE']][x[0].elements.content]
+        return d[s.scope()][x[0].elements.content]
     elif x[0].elements.token_type == 'VALUE':
         return float(x[0].elements.content)
     else:
         print('Invalid lookup token type', x[0].elements.token_type)
         sys.exit(1)
     
-def handle_rhs(x, s):
+def handle_rhs(x, s, d):
     if len(x) == 1:
-        return interpret(x[0], s)
+        return interpret(x[0], s, old_data_store)
     elif len(x) == 3:
-        numerator = interpret(x[0], s)
-        denominator = interpret(x[2], s)
+        numerator = interpret(x[0], s, old_data_store)
+        denominator = interpret(x[2], s, old_data_store)
+        print('rhs',numerator,denominator)
         return numerator / denominator
     else:
         print('Invalid number of arguments in handle rhs')
         sys.exit(1)
 
-def null_handler(x, s):
+def null_handler(x, s, d):
     pass
 
 parse_handler = defaultdict(lambda: null_handler)
 parse_handler['EXPRLIST'] = handle_exprlist
 parse_handler['EXPR'] = handle_expr
 parse_handler['EXPORT'] = handle_export
+parse_handler['IMPORT'] = handle_import
 parse_handler['INCREMENT'] = handle_increment
 parse_handler['SCOPE'] = handle_scope
 parse_handler['LOOKUP'] = handle_lookup
 parse_handler['RHS'] = handle_rhs
 
 
-def initial_handle_scope(x, s):
-    outer_parent = s['PARENT_SCOPE']
-    s['PARENT_SCOPE'] = s['SCOPE']
-    s['SCOPE'] = x[1].elements.content
-    initial_interpret(x[2], s)
-    s['SCOPE'] = s['PARENT_SCOPE']
-    s['PARENT_SCOPE'] = outer_parent
+def initial_handle_scope(x, s, d):
+    s.push(x[1].elements.content)
+    initial_interpret(x[2], s, d)
+    s.pop()
     
-def initial_handle_exprlist(x, s):
-    initial_interpret(x[0], s)
+def initial_handle_exprlist(x, s, d):
+    initial_interpret(x[0], s, d)
     if (len(x) == 2):
-        initial_interpret(x[1], s)
+        initial_interpret(x[1], s, d)
 
-def initial_handle_expr(x, s):
-    initial_interpret(x[0], s)
+def initial_handle_expr(x, s, d):
+    initial_interpret(x[0], s, d)
 
 initial_parse_handler = defaultdict(lambda: null_handler)
 initial_parse_handler['EXPRLIST'] = initial_handle_exprlist
@@ -246,22 +276,23 @@ initial_parse_handler['EXPR'] = initial_handle_expr
 ### INTERPRETER
 ###
 
-def initial_interpret(parse_tree, state):
+def initial_interpret(parse_tree, state, d):
     if isinstance(parse_tree, Parse):
-        return initial_parse_handler[parse_tree.rule_type](parse_tree.elements, state)
+        return initial_parse_handler[parse_tree.rule_type](parse_tree.elements, state, d)
 
-def interpret(parse_tree, state):
+def interpret(parse_tree, state, d):
     if isinstance(parse_tree, Parse):
         # TODO: can use defaultdict.  Syntax: defaultdict(default)
-        return parse_handler[parse_tree.rule_type](parse_tree.elements, state)
+        return parse_handler[parse_tree.rule_type](parse_tree.elements, state, d)
 
-base_state = {'PARENT_SCOPE': None, 'SCOPE': None}
+base_state = Scope([None, None])
 
 scoped_values = defaultdict(lambda: [])
-initial_interpret(parse_final[2], base_state)
+initial_interpret(parse_final[2], base_state, data_store)
 print(data_store)
 for i in range(0, int(sys.argv[2])):
-    interpret(parse_final[2], base_state)
+    old_data_store = copy.deepcopy(data_store)
+    interpret(parse_final[2], base_state, data_store)
     for scope in data_store:
         for value in data_store[scope]:
             full_name = "%s:%s" % (scope, value)
