@@ -49,7 +49,7 @@ token_dict.append(('PLUSEQUAL', '\+='))
 token_dict.append(('EXPORT', '\^='))
 token_dict.append(('IMPORT', 'v='))
 token_dict.append(('EQUAL', '='))
-token_dict.append(('DIVISION', '/'))
+token_dict.append(('ARITHMETIC', '[/\*\+\-]'))
 token_dict.append(('SCOPENAME', ':[^\n]*\n'))
 token_dict.append(('NAME', '[a-zA-Z][a-zA-Z0-9]*'))
 token_dict.append(('VALUE', '\-?[0-9]+'))
@@ -107,7 +107,7 @@ productions['IMPORT'] = [[Token('NAME'),
                           Token('IMPORT'),
                           Rule('RHS')]]
 productions['RHS'] = [[Rule('LOOKUP'),
-                       Token('DIVISION'),
+                       Token('ARITHMETIC'),
                        Rule('LOOKUP')],
                       [Rule('LOOKUP')]]
 productions['LOOKUP'] = [[Token('NAME')],
@@ -225,15 +225,20 @@ def handle_lookup(x, s, d):
     else:
         print('Invalid lookup token type', x[0].elements.token_type)
         sys.exit(1)
-    
+
+arithmetic_op = {}
+arithmetic_op['+'] = lambda l, r: l + r
+arithmetic_op['-'] = lambda l, r: l - r
+arithmetic_op['*'] = lambda l, r: l * r
+arithmetic_op['/'] = lambda l, r: l / r
+
 def handle_rhs(x, s, d):
     if len(x) == 1:
         return interpret(x[0], s, old_data_store)
     elif len(x) == 3:
-        numerator = interpret(x[0], s, old_data_store)
-        denominator = interpret(x[2], s, old_data_store)
-        print('rhs',numerator,denominator)
-        return numerator / denominator
+        left = interpret(x[0], s, old_data_store)
+        right = interpret(x[2], s, old_data_store)
+        return arithmetic_op[x[1].elements.content](left, right)
     else:
         print('Invalid number of arguments in handle rhs')
         sys.exit(1)
@@ -289,7 +294,6 @@ base_state = Scope([None, None])
 
 scoped_values = defaultdict(lambda: [])
 initial_interpret(parse_final[2], base_state, data_store)
-print(data_store)
 for i in range(0, int(sys.argv[2])):
     old_data_store = copy.deepcopy(data_store)
     interpret(parse_final[2], base_state, data_store)
@@ -297,8 +301,6 @@ for i in range(0, int(sys.argv[2])):
         for value in data_store[scope]:
             full_name = "%s:%s" % (scope, value)
             scoped_values[full_name].append(data_store[scope][value])
-print(data_store)
-print(scoped_values)
 
 x = range(0, int(sys.argv[2]))
 for value in scoped_values:
