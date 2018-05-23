@@ -44,6 +44,8 @@ token_dict = []
 token_dict.append((None, '#[^\n]*\n'))
 token_dict.append(('LBRACKET', '{'))
 token_dict.append(('RBRACKET', '}'))
+token_dict.append(('LPAREN', '\('))
+token_dict.append(('RPAREN', '\)'))
 token_dict.append(('SEMICOLON', ';'))
 token_dict.append(('PLUSEQUAL', '\+='))
 token_dict.append(('EXPORT', '\^='))
@@ -111,7 +113,12 @@ productions['RHS'] = [[Rule('LOOKUP'),
                        Rule('LOOKUP')],
                       [Rule('LOOKUP')]]
 productions['LOOKUP'] = [[Token('NAME')],
-                         [Token('VALUE')]]
+                         [Token('VALUE')],
+                         [Rule('GROUP')],
+                         [Rule('RHS')]]
+productions['GROUP'] = [[Token('LPAREN'),
+                         Rule('RHS'),
+                         Token('RPAREN')]]
 
 class Parse:
     def __init__(self, name, elements):
@@ -217,8 +224,13 @@ def handle_exprlist(x, s, d):
 def handle_expr(x, s, d):
     interpret(x[0], s, d)
 
+def handle_group(x, s, d):
+    return interpret(x[1], s, d)
+
 def handle_lookup(x, s, d):
-    if x[0].elements.token_type == 'NAME':
+    if x[0].rule_type == 'GROUP':
+        return interpret(x[0], s, d)
+    elif x[0].elements.token_type == 'NAME':
         return d[s.scope()][x[0].elements.content]
     elif x[0].elements.token_type == 'VALUE':
         return float(x[0].elements.content)
@@ -255,6 +267,7 @@ parse_handler['INCREMENT'] = handle_increment
 parse_handler['SCOPE'] = handle_scope
 parse_handler['LOOKUP'] = handle_lookup
 parse_handler['RHS'] = handle_rhs
+parse_handler['GROUP'] = handle_group
 
 
 def initial_handle_scope(x, s, d):
